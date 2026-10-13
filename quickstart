@@ -1,0 +1,117 @@
+Quickstart
+Validate BIOS / UEFI settings
+Install Proxmox VE
+Create ZFS pools
+Build cluster with Corosync
+Configure SDN and firewall
+Set up PBS backup
+Run restore drills
+License
+MIT — see LICENSE EOF
+
+cat > docs/architecture.md <<'EOF'
+
+Architecture: Proxmox VE, ZFS, PCIe, NUMA, and Cluster Design
+1. Objective
+This document focuses on the core mechanisms that make a real Proxmox environment stable and performant:
+
+ZFS design
+ARC / L2ARC / SLOG
+PCIe bifurcation
+NUMA topology
+cluster orchestration
+storage and backup design
+security model
+2. Proxmox VE as a technical synthesis
+Proxmox VE is not just a hypervisor UI. It is a complete platform:
+
+Debian Linux base
+KVM for virtualization
+LXC for lightweight containers
+ZFS for storage
+Corosync + pmxcfs for cluster communication
+API-driven automation and IaC
+3. ZFS design
+ZFS provides:
+
+copy-on-write
+checksums
+scrubbing
+instant snapshots
+replication
+compression
+deduplication
+integrity-first storage design
+ARC, L2ARC, SLOG
+ARC: RAM cache
+L2ARC: SSD/NVMe read cache
+SLOG/ZIL: sync-write logging device
+4. NUMA and host performance
+NUMA is crucial on multi-socket enterprise hardware:
+
+pin vCPUs
+align memory locality
+map storage and NICs near CPU domains
+5. PCIe and VFIO
+GPU passthrough requires:
+
+IOMMU enabled
+correct BIOS settings
+verified IOMMU groups
+no host driver conflicts
+6. Proxmox cluster
+Use:
+
+Corosync
+pmxcfs
+fencing
+quorum awareness
+recovery path validation
+7. Backup strategy
+Use PBS:
+
+incremental backups
+deduplication
+encryption
+restore testing EOF
+cat > docs/why-enterprise-hardware.md <<'EOF'
+
+Why Enterprise Hardware Endures
+1. Quality by design
+Enterprise hardware is built for:
+
+24/7 operation
+thermal resilience
+redundant power
+ECC memory
+higher I/O throughput
+long product support windows
+2. MTBF and manufacturing quality
+Enterprise hardware is designed for reliability and continuity, not just convenience.
+
+3. ECC RAM
+ECC protects against:
+
+single-bit errors
+silent data corruption
+memory faults in large systems
+4. TCO logic
+Second-life enterprise hardware is often more affordable per core and per GB RAM than consumer hardware.
+
+5. Cloud trap
+Cloud gives convenience but often creates:
+
+price escalation
+lock-in
+egress costs
+reduced control
+Bare metal + Proxmox gives ownership and control. EOF
+
+cat > configs/proxmox-sdn-example.md <<'EOF'
+
+Proxmox SDN – Example Design
+Network layout
+Management network
+Production VLAN
+Storage VLAN
+Security / lab VLAN
