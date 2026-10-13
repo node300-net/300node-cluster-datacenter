@@ -1,3 +1,112 @@
+
+bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_DIR="${1:-$HOME/node300-cluster-datacenter}"
+REPO_URL="https://github.com/node300-net/300node-cluster-datacenter.git"
+
+echo "Creating project directory: $PROJECT_DIR"
+mkdir -p "$PROJECT_DIR"/docs "$PROJECT_DIR"/configs "$PROJECT_DIR"/ansible/group_vars "$PROJECT_DIR"/ansible/templates "$PROJECT_DIR"/ansible/roles/common/tasks "$PROJECT_DIR"/ansible/roles/proxmox/tasks "$PROJECT_DIR"/ansible/roles/zfs/tasks "$PROJECT_DIR"/ansible/roles/cluster/tasks "$PROJECT_DIR"/ansible/roles/pbs/tasks "$PROJECT_DIR"/playbooks "$PROJECT_DIR"/scripts "$PROJECT_DIR"/lab-notes
+
+cd "$PROJECT_DIR"
+
+cat > README.md <<'EOF'
+# The Sovereign Datacenter
+## Why Proxmox VE & Recycled Enterprise Hardware Obliterate Consumer Tech & The Cloud Trap
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Platform: Proxmox VE](https://img.shields.io/badge/Platform-Proxmox%20VE-blue.svg)](https://www.proxmox.com/)
+
+> “Sovereignty is not an ideology. It is the practical ability to own your infrastructure, your data, your recovery path, and your failure modes.”
+
+This repository is a practical, deeply technical reference for building a sovereign datacenter on Proxmox VE using recycled enterprise hardware. It combines architecture, storage design, network design, GPU passthrough, backup strategy, and security principles into a coherent model.
+
+## Why Proxmox VE?
+- Debian Linux base
+- KVM full virtualization
+- LXC lightweight containerization
+- native ZFS integration
+- Corosync + pmxcfs cluster control
+- API-driven automation and IaC
+
+## Why Enterprise Hardware?
+- ECC memory
+- hot-swap redundancy
+- higher MTBF
+- superior I/O
+- lower TCO over time
+- better performance per euro in real-world workloads
+
+## Reference topology
+```mermaid
+flowchart TB
+    subgraph Fabric["Cluster Fabric / Management"]
+        Core["Huawei S220S-24LP4JX\n10GbE Core Interconnect"]
+        Mgmt["Zyxel GS1900-24E v3\nMgmt / OOB"]
+        FW["Firewalla Gold Pro\nPerimeter / Firewall"]
+    end
+
+    subgraph PVE["Proxmox VE Cluster"]
+        N0["NODE 0\nSEC-CORE\nFirewall & VPC Gateway"]
+        N1["NODE 1\nDEFENSE\nHoneypot & Deception"]
+        N2["NODE 2\nANALYTICS\nML & Anomaly Engine"]
+        N3["NODE 3\nMONITOR\nSuricata IDS / Logging"]
+    end
+
+    Internet --> FW
+    FW --> Core
+    Core --> N0
+    Core --> N1
+    Core --> N2
+    Core --> N3
+
+    Mgmt --> N0
+    Mgmt --> N1
+    Mgmt --> N2
+    Mgmt --> N3
+Repository structure
+Text
+.
+├── README.md
+├── LICENSE
+├── .gitignore
+├── Makefile
+├── docs/
+│   ├── architecture.md
+│   └── why-enterprise-hardware.md
+├── configs/
+│   ├── proxmox-sdn-example.md
+│   ├── vfio-gpu-blacklist.conf
+│   ├── nftables-proxmox-rules.nft
+│   └── pve-cluster-config.example.yaml
+├── ansible/
+│   ├── ansible.cfg
+│   ├── hosts.yaml
+│   ├── group_vars/
+│   │   └── all.yml
+│   ├── templates/
+│   │   ├── corosync.conf.j2
+│   │   ├── nftables.j2
+│   │   └── pve-vm-config.j2
+│   └── roles/
+│       ├── common/tasks/main.yml
+│       ├── proxmox/tasks/main.yml
+│       ├── zfs/tasks/main.yml
+│       ├── cluster/tasks/main.yml
+│       └── pbs/tasks/main.yml
+├── playbooks/
+│   ├── bootstrap-proxmox.yml
+│   ├── setup-zfs.yml
+│   ├── setup-cluster.yml
+│   ├── setup-nftables.yml
+│   ├── setup-pbs.yml
+│   └── pbs-backup.yml
+├── scripts/
+│   └── push_to_github.sh
+├── lab-notes/
+│   └── README.md
+└── README_SETUP.md
 Quickstart
 Validate BIOS / UEFI settings
 Install Proxmox VE
@@ -115,3 +224,386 @@ Management network
 Production VLAN
 Storage VLAN
 Security / lab VLAN
+Example:
+
+Text
+vmbr0 -> physical uplink -> trunk / management / edge
+vmbr10 -> VLAN 10 -> production
+vmbr20 -> VLAN 20 -> lab / honeypot
+vmbr30 -> VLAN 30 -> storage replication
+Example Linux bridge
+bash
+auto lo
+iface lo inet loopback
+
+auto bond0
+iface bond0 inet manual
+    slaves eno1 eno2
+    bond_mode 802.3ad
+    bond_miimon 100
+    bond_lacp_rate 1
+
+auto vmbr0
+iface vmbr0 inet static
+    address 192.168.1.10/24
+    gateway 192.168.1.1
+    bridge_ports bond0
+    bridge_stp off
+    bridge_fd 0
+EOF
+
+cat > configs/vfio-gpu-blacklist.conf <<'EOF'
+
+/etc/modprobe.d/vfio.conf
+blacklist nouveau blacklist nvidia blacklist nvidia_modeset blacklist nvidia_uvm blacklist nvidia_drm
+
+options vfio-pci ids=10de:1b80,10de:10f0 EOF
+
+cat > configs/nftables-proxmox-rules.nft <<'EOF' #!/usr/sbin/nft -f
+
+flush ruleset
+
+table inet filter { chain input { type filter hook input priority filter; policy drop;
+
+Code
+    ct state established,related accept
+    iifname "lo" accept
+    ip protocol icmp accept
+    tcp dport { 22, 8006 } ct state new accept
+    ip saddr 192.168.1.0/24 accept
+}
+
+chain forward {
+    type filter hook forward priority filter; policy drop;
+
+    iifname "vmbr10" oifname "vmbr20" accept
+}
+
+chain output {
+    type filter hook output priority filter; policy accept;
+}
+} EOF
+
+cat > configs/pve-cluster-config.example.yaml <<'EOF' cluster: name: sovereign-datacenter nodes: - name: node0 role: sec-core ip: 10.10.10.10 - name: node1 role: defense ip: 10.10.10.11 - name: node2 role: analytics ip: 10.10.10.12 - name: node3 role: monitor ip: 10.10.10.13
+
+storage: zfs_pool: rpool ashift: 12 compression: lz4
+
+network: mgmt_vlan: 10 production_vlan: 20 lab_vlan: 30 storage_vlan: 40
+
+security: nftables: true firewall_perimeter: true EOF
+
+cat > ansible/ansible.cfg <<'EOF' [defaults] inventory = hosts.yaml host_key_checking = False retry_files_enabled = False stdout_callback = yaml gather_facts = True forks = 20 timeout = 30 EOF
+
+cat > ansible/hosts.yaml <<'EOF' all: children: proxmox_nodes: hosts: node0: ansible_host: 10.10.10.10 ansible_user: root node1: ansible_host: 10.10.10.11 ansible_user: root node2: ansible_host: 10.10.10.12 ansible_user: root node3: ansible_host: 10.10.10.13 ansible_user: root
+
+Code
+pbs:
+  hosts:
+    pbs1:
+      ansible_host: 10.10.20.10
+      ansible_user: root
+EOF
+
+cat > ansible/group_vars/all.yml <<'EOF'
+proxmox_version: "8.2" timezone: "Europe/Berlin"
+
+apt_sources: debian: - "deb http://deb.debian.org/debian bookworm main contrib" - "deb http://deb.debian.org/debian bookworm-updates main contrib" - "deb http://security.debian.org/debian-security bookworm-security main contrib" proxmox: - "deb [arch=amd64] https://enterprise.proxmox.com/debian/pve bookworm pve-enterprise" - "deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription"
+
+common_packages:
+
+ca-certificates
+curl
+htop
+iotop
+jq
+net-tools
+nvme-cli
+smartmontools
+sudo
+tmux
+rsync
+gdisk
+git
+ncdu
+zfsutils-linux
+python3-pip
+kernel_params:
+
+"intel_iommu=on"
+"iommu=pt"
+"quiet"
+zfs: ashift: 12 compression: lz4 atime: "off" autotrim: "on"
+
+cluster: name: "sovereign-datacenter" ring0: "10.10.10.0/24" vote_count: 4 token: 5000 consensus: 2 nodes: - name: node0 ip: 10.10.10.10 - name: node1 ip: 10.10.10.11 - name: node2 ip: 10.10.10.12 - name: node3 ip: 10.10.10.13
+
+pbs: storage_name: "pbs-storage" version: "3.0" api_port: 8007 storage_path: "/var/lib/proxmox-backup" backup_retention_days: 14 EOF
+
+cat > ansible/templates/corosync.conf.j2 <<'EOF' totem { version: 2 secauth: on threads: 0 rrp_mode: none token: {{ cluster.token | default(5000) }} consensus: {{ cluster.consensus | default(2) }} interface { ringnumber: 0 bindnetaddr: {{ cluster.ring0.split('/')[0] }} mcastaddr: 239.192.0.1 mcastport: 5405 ttl: 1 } }
+
+nodelist { {% for n in cluster.nodes %} node { ring0_addr: {{ n.ip }} nodeid: {{ loop.index }} name: {{ n.name }} } {% endfor %} }
+
+quorum { provider: corosync_votequorum expected_votes: {{ cluster.vote_count | default(cluster.nodes | length) }} two_node: {{ '1' if (cluster.two_node | default(False)) else '0' }} }
+
+logging { to_syslog: yes debug: off timestamp: on } EOF
+
+cat > ansible/templates/nftables.j2 <<'EOF' #!/usr/sbin/nft -f flush ruleset
+
+table inet filter { chain input { type filter hook input priority 0; policy drop; ct state established,related accept iif "lo" accept ip protocol icmp accept tcp dport { 22, 8006 } ct state new accept ip saddr {{ management_network | default("192.168.1.0/24") }} accept {% if monitoring_network is defined %} ip saddr {{ monitoring_network }} accept {% endif %} }
+
+Code
+chain forward {
+    type filter hook forward priority 0; policy drop;
+    iifname "{{ production_bridge | default('vmbr10') }}" oifname "{{ production_bridge | default('vmbr10') }}" accept
+    ip saddr {{ storage_network | default("10.10.30.0/24") }} ip daddr {{ storage_network | default("10.10.30.0/24") }} accept
+}
+
+chain output {
+    type filter hook output priority 0; policy accept;
+}
+} EOF
+
+cat > ansible/templates/pve-vm-config.j2 <<'EOF' name: {{ vm_name | default("vm-" + vmid | string) }} memory: {{ memory_mb }} sockets: {{ sockets | default(1) }} cores: {{ cores | default(2) }} numa: {{ '1' if numa_enabled | default(True) else '0' }} scsi0: {{ disk_zvol }}{{ ',cache=writeback' if scsi_cache_writeback | default(True) else '' }} boot: order=scsi0
+
+{% if ci_user is defined %} ciuser: {{ ci_user }} {% endif %} {% if sshkeys is defined %} sshkeys: | {{ sshkeys | indent(2) }} {% endif %}
+
+net0: virtio={{ mac | default('DE:AD:BE:EF:00:01') }},bridge={{ bridge | default('vmbr0') }},tag={{ vlan_tag | default(0) }}
+
+{% if hostpci is defined %} hostpci0: {{ hostpci }} {% endif %}
+
+cpu: host vga: {{ vga | default('none') }} EOF
+
+cat > ansible/roles/common/tasks/main.yml <<'EOF'
+name: Ensure system is up to date ansible.builtin.apt: update_cache: true upgrade: safe
+
+name: Set timezone community.general.timezone: name: "{{ timezone }}"
+
+name: Install common packages ansible.builtin.apt: name: "{{ common_packages }}" state: present
+
+name: Ensure /etc/hosts has managed entries ansible.builtin.blockinfile: path: /etc/hosts block: | 10.10.10.10 node0 10.10.10.11 node1 10.10.10.12 node2 10.10.10.13 node3 10.10.20.10 pbs1 marker: "# {mark} managed by ansible"
+
+name: Configure kernel params for IOMMU ansible.builtin.lineinfile: path: /etc/default/grub regexp: '^GRUB_CMDLINE_LINUX_DEFAULT=' line: 'GRUB_CMDLINE_LINUX_DEFAULT="quiet {{ kernel_params | join(" ") }}"' notify: update grub
+
+name: Add Proxmox repositories ansible.builtin.apt_repository: repo: "{{ item }}" state: present loop: "{{ apt_sources.proxmox }}"
+
+name: Add Debian repositories ansible.builtin.apt_repository: repo: "{{ item }}" state: present loop: "{{ apt_sources.debian }}" EOF
+
+cat > ansible/roles/proxmox/tasks/main.yml <<'EOF'
+name: Install Proxmox VE packages ansible.builtin.apt: name: - proxmox-ve - pve-manager - pve-kernel-* - pve-headers - postfix - openvswitch-switch - bridge-utils - dnsutils - ifenslave - vlan - iproute2 state: present
+
+name: Ensure services are enabled ansible.builtin.systemd: name: "{{ item }}" enabled: true state: started loop:
+
+pveproxy
+pvedaemon
+pve-cluster
+corosync
+name: Set hostname ansible.builtin.hostname: name: "{{ inventory_hostname }}"
+
+name: Configure /etc/hostname ansible.builtin.copy: content: "{{ inventory_hostname }}\n" dest: /etc/hostname mode: "0644" EOF
+
+cat > ansible/roles/zfs/tasks/main.yml <<'EOF'
+name: Ensure ZFS packages are installed ansible.builtin.apt: name: - zfsutils-linux - zfs-initramfs state: present
+
+name: Load ZFS module ansible.builtin.modprobe: name: zfs state: present
+
+name: Check if rpool exists ansible.builtin.command: zpool list rpool register: zpool_exists failed_when: false changed_when: false
+
+name: Create example pool if missing ansible.builtin.command: > zpool create -f -o ashift={{ zfs.ashift }} -O compression={{ zfs.compression }} -O atime={{ zfs.atime }} -o autotrim={{ zfs.autotrim }} rpool mirror /dev/disk/by-id/example-disk-1 /dev/disk/by-id/example-disk-2 when: zpool_exists.rc != 0 failed_when: false EOF
+
+cat > ansible/roles/cluster/tasks/main.yml <<'EOF'
+name: Render Corosync config ansible.builtin.template: src: templates/corosync.conf.j2 dest: /etc/pve/corosync.conf mode: "0644" when: inventory_hostname == 'node0'
+
+name: Create cluster on first node ansible.builtin.command: "pvecm create {{ cluster.name }}" when: inventory_hostname == 'node0' failed_when: false changed_when: false
+
+name: Join other nodes to cluster ansible.builtin.command: "pvecm add 10.10.10.10" when: inventory_hostname != 'node0' failed_when: false changed_when: false
+
+name: Ensure corosync service is running ansible.builtin.systemd: name: corosync state: restarted enabled: true
+
+name: Ensure pve cluster service is running ansible.builtin.systemd: name: pve-cluster state: restarted enabled: true EOF
+
+cat > ansible/roles/pbs/tasks/main.yml <<'EOF'
+name: Add PBS repository ansible.builtin.apt_repository: repo: "deb http://download.proxmox.com/debian/pbs bookworm pbs-no-subscription" state: present
+
+name: Install PBS packages ansible.builtin.apt: name: - proxmox-backup-server - proxmox-backup-client state: present
+
+name: Ensure storage directory exists ansible.builtin.file: path: "{{ pbs.storage_path }}" state: directory mode: "0755"
+
+name: Ensure PBS service is enabled ansible.builtin.systemd: name: proxmox-backup-proxy enabled: true state: started EOF
+
+cat > playbooks/bootstrap-proxmox.yml <<'EOF'
+name: Bootstrap Proxmox base system hosts: proxmox_nodes become: true gather_facts: true
+
+roles:
+
+common
+proxmox EOF
+cat > playbooks/setup-zfs.yml <<'EOF'
+name: Setup ZFS storage hosts: proxmox_nodes become: true gather_facts: true
+
+roles:
+
+zfs EOF
+cat > playbooks/setup-cluster.yml <<'EOF'
+name: Setup Proxmox cluster hosts: proxmox_nodes become: true gather_facts: true
+
+roles:
+
+cluster EOF
+cat > playbooks/setup-nftables.yml <<'EOF'
+name: Deploy nftables rules hosts: proxmox_nodes become: true vars: management_network: "192.168.1.0/24" storage_network: "10.10.30.0/24" production_bridge: "vmbr10"
+
+tasks:
+
+name: Render nftables configuration template: src: ../ansible/templates/nftables.j2 dest: /etc/nftables.conf mode: "0644"
+
+name: Ensure nftables service is enabled ansible.builtin.systemd: name: nftables enabled: true state: restarted EOF
+
+cat > playbooks/setup-pbs.yml <<'EOF'
+name: Setup Proxmox Backup Server hosts: pbs become: true gather_facts: true
+
+roles:
+
+pbs EOF
+cat > playbooks/pbs-backup.yml <<'EOF'
+name: Backup all VMs to PBS hosts: proxmox_nodes serial: 1 become: true vars: backup_storage_name: "{{ pbs.storage_name | default('pbs-storage') }}" backup_mode: snapshot compression: zstd
+
+tasks:
+
+name: Gather VM list ansible.builtin.command: qm list --full register: qm_list changed_when: false
+
+name: Extract vm IDs ansible.builtin.set_fact: vm_ids: "{{ qm_list.stdout_lines | map('regex_search', '^\s*(\d+)') | select('string') | list }}" when: qm_list.stdout != ""
+
+name: Backup each VM ansible.builtin.command: > vzdump {{ item }} --mode {{ backup_mode }} --compress {{ compression }} --storage {{ backup_storage_name }} --remove 0 loop: "{{ vm_ids | default([]) }}" when: vm_ids is defined and vm_ids | length > 0 EOF
+
+cat > Makefile <<'EOF' ANSIBLE = ansible-playbook PLAYBOOKS_DIR = playbooks ANSIBLE_DIR = ansible
+
+.PHONY: bootstrap zfs cluster nftables pbs backup help
+
+help: @echo "Available targets:" @echo " bootstrap -> bootstrap Proxmox nodes" @echo " zfs -> configure ZFS" @echo " cluster -> build cluster" @echo " nftables -> deploy nftables rules" @echo " pbs -> configure Proxmox Backup Server" @echo " backup -> backup VMs to PBS"
+
+bootstrap: $(ANSIBLE) -i $(ANSIBLE_DIR)/hosts.yaml $(PLAYBOOKS_DIR)/bootstrap-proxmox.yml
+
+zfs: $(ANSIBLE) -i $(ANSIBLE_DIR)/hosts.yaml $(PLAYBOOKS_DIR)/setup-zfs.yml
+
+cluster: $(ANSIBLE) -i $(ANSIBLE_DIR)/hosts.yaml $(PLAYBOOKS_DIR)/setup-cluster.yml
+
+nftables: $(ANSIBLE) -i $(ANSIBLE_DIR)/hosts.yaml $(PLAYBOOKS_DIR)/setup-nftables.yml
+
+pbs: $(ANSIBLE) -i $(ANSIBLE_DIR)/hosts.yaml $(PLAYBOOKS_DIR)/setup-pbs.yml
+
+backup: $(ANSIBLE) -i $(ANSIBLE_DIR)/hosts.yaml $(PLAYBOOKS_DIR)/pbs-backup.yml EOF
+
+cat > .gitignore <<'EOF'
+
+Editors
+.vscode/ .idea/ .DS_Store
+
+Logs
+*.log *.swp *.swo
+
+Python
+pycache/ *.pyc venv/ .env
+
+Node
+node_modules/ dist/ build/
+
+Secrets
+*.pem *.key *.crt *.ovpn
+
+OS
+Thumbs.db EOF
+
+cat > LICENSE <<'EOF' MIT License
+
+Copyright (c) 2026 node300-net
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. EOF
+
+cat > scripts/push_to_github.sh <<'EOF' #!/usr/bin/env bash set -euo pipefail
+
+echo "== local git setup for 300node-cluster-datacenter =="
+
+if ! command -v git >/dev/null 2>&1; then echo "ERROR: git is not installed" exit 2 fi
+
+read -r -p "Enter GitHub remote URL: " REMOTE_URL if [[ -z "$REMOTE_URL" ]]; then echo "No remote URL entered. Aborting." exit 1 fi
+
+if [ ! -d .git ]; then git init fi
+
+git add --all if ! git diff --cached --quiet; then git commit -m "Initial import: 300node-cluster-datacenter" fi
+
+git branch -M main
+
+if git remote get-url origin >/dev/null 2>&1; then git remote set-url origin "$REMOTE_URL" else git remote add origin "$REMOTE_URL" fi
+
+git push -u origin main EOF
+
+chmod +x scripts/push_to_github.sh
+
+cat > lab-notes/README.md <<'EOF'
+
+Lab Notes
+Use this folder for:
+
+hardware inventory
+BIOS settings
+ZFS commands
+cluster notes
+backup documentation
+operational logs
+restore exercises EOF
+cat > README_SETUP.md <<'EOF'
+
+Final Setup Pack — Quickstart
+Create folder
+bash
+mkdir -p ~/node300-cluster-datacenter
+cd ~/node300-cluster-datacenter
+Install Ansible
+bash
+python3 -m pip install ansible
+Validate inventory
+bash
+ansible -i ansible/hosts.yaml -m ping all
+Run playbooks
+bash
+ansible-playbook -i ansible/hosts.yaml playbooks/bootstrap-proxmox.yml
+ansible-playbook -i ansible/hosts.yaml playbooks/setup-zfs.yml
+ansible-playbook -i ansible/hosts.yaml playbooks/setup-cluster.yml
+ansible-playbook -i ansible/hosts.yaml playbooks/setup-nftables.yml
+ansible-playbook -i ansible/hosts.yaml playbooks/setup-pbs.yml
+ansible-playbook -i ansible/hosts.yaml playbooks/pbs-backup.yml
+Push to GitHub
+bash
+chmod +x scripts/push_to_github.sh
+./scripts/push_to_github.sh
+Then enter:
+
+bash
+https://github.com/node300-net/300node-cluster-datacenter.git
+EOF
+
+echo "" echo "Project created successfully at: $PROJECT_DIR" echo "Next steps:" echo " cd $PROJECT_DIR" echo " ansible -i ansible/hosts.yaml -m ping all" echo " chmod +x scripts/push_to_github.sh" echo " ./scripts/push_to_github.sh" echo "" echo "Remote target:" echo " $REPO_URL"
+
+Code
+
+So benutzt du das Script:
+- Speichere das oben stehende Script als z. B. setup_repo.sh
+- chmod +x setup_repo.sh
+- ./setup_repo.sh
+- Das erzeugt das Projekt in:
+  ~/node300-cluster-datacenter
+- und fragt nach der GitHub-Remote-URL
+- danach commitet und pusht es automatisch
+
+Wenn du das lieber sofort in deinem Terminal ausführst, kannst du auch den folgenden One-Liner nutzen:
+
+```bash
+bash -lc 'PROJECT_DIR="$HOME/node300-cluster-datacenter"; REPO_URL="https://github.com/node300-net/300node-cluster-datacenter.git"; mkdir -p "$PROJECT_DIR"/docs "$PROJECT_DIR"/configs "$PROJECT_DIR"/ansible/group_vars "$PROJECT_DIR"/ansible/templates "$PROJECT_DIR"/ansible/roles/common/tasks "$PROJECT_DIR"/ansible/roles/proxmox/tasks "$PROJECT_DIR"/ansible/roles/zfs/tasks "$PROJECT_DIR"/ansible/roles/cluster/tasks "$PROJECT_DIR"/ansible/roles/pbs/tasks "$PROJECT_DIR"/playbooks "$PROJECT_DIR"/scripts "$PROJECT_DIR"/lab-notes; cd "$PROJECT_DIR"; cat > README.md <<EOF
+# The Sovereign Datacenter
+## Why Proxmox VE & Recycled Enterprise Hardware Obliterate Consumer Tech & The Cloud Trap
+...
+EOF
+'
