@@ -1,0 +1,40 @@
+.
+├── README.md
+├── LICENSE
+├── .gitignore
+├── Makefile
+├── docs/
+│   ├── architecture.md
+│   └── why-enterprise-hardware.md
+├── configs/
+│   ├── proxmox-sdn-example.md
+│   ├── vfio-gpu-blacklist.conf
+│   ├── nftables-proxmox-rules.nft
+│   └── pve-cluster-config.example.yaml
+├── ansible/
+│   ├── ansible.cfg
+│   ├── hosts.yaml
+│   ├── group_vars/
+│   │   └── all.yml
+│   ├── templates/
+│   │   ├── corosync.conf.j2
+│   │   ├── nftables.j2
+│   │   └── pve-vm-config.j2
+│   └── roles/
+│       ├── common/tasks/main.yml
+│       ├── proxmox/tasks/main.yml
+│       ├── zfs/tasks/main.yml
+│       ├── cluster/tasks/main.yml
+│       └── pbs/tasks/main.yml
+├── playbooks/
+│   ├── bootstrap-proxmox.yml
+│   ├── setup-zfs.yml
+│   ├── setup-cluster.yml
+│   ├── setup-nftables.yml
+│   ├── setup-pbs.yml
+│   └── pbs-backup.yml
+├── scripts/
+│   └── push_to_github.sh
+├── lab-notes/
+│   └── README.md
+└── README_SETUP.md
